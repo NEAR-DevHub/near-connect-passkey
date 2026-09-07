@@ -98,7 +98,7 @@ function assertMainnet(network?: string): void {
 
 async function accountExists(client: Client, accountId: string): Promise<boolean> {
   const info = await client.safeGetAccountInfo({ accountId });
-  if (info.ok) return true;
+  if (info.success) return true;
   if (isNatError(info.error, "Client.GetAccountInfo.Rpc.Account.NotFound")) return false;
   throw info.error;
 }
