@@ -51,7 +51,7 @@ export const DEFAULT_TIMEOUT_SECS = 3600;
  * and stays friction-free. Additional accounts prompt for a username/email
  * label to keep them distinguishable in the device's passkey manager.
  */
-export const DEFAULT_PASSKEY_LABEL = "Trezu.org Account";
+export const DEFAULT_PASSKEY_LABEL = "My NEAR Account";
 
 /** Domain prefix for NEP-641 OffchainMessage hashing (SHA3-256). */
 export const OFFCHAIN_DOMAIN = "NEAR_NEP641_OFFCHAIN_MESSAGE/V1";

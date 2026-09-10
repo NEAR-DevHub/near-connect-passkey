@@ -26,7 +26,7 @@ in the user's terms, not the mechanism (WebAuthn/passkey).
 
 On **Sign up**, if there are **no** local passkey records
 (`passkey:known` empty), we do **not** prompt for anything. The passkey is
-labelled with the default `DEFAULT_PASSKEY_LABEL` ("Trezu.org Account") and we
+labelled with the default `DEFAULT_PASSKEY_LABEL` ("My NEAR Account") and we
 go straight to the device ceremony (Face ID / fingerprint / PIN).
 
 Why: a first-time user asked to "name your passkey" has no idea what to type,
@@ -39,7 +39,7 @@ in the OS passkey manager, so a sensible default costs the user nothing.
 We ask for a label (`ui.promptPasskeyLabel`, a username or email) **only** when
 the user already has a passkey on this device and is creating **another**
 account. Now the label earns its keep: it is the only thing distinguishing two
-Trezu entries in the device's passkey manager. Empty input still falls back to
+Passkey entries in the device's passkey manager. Empty input still falls back to
 the default label.
 
 Decision gate: `Object.keys(await storage.getKnownCredentials()).length === 0`
