@@ -65,7 +65,7 @@ type Params = Record<string, string | number>;
 type Catalog = Record<string, string>;
 
 const en: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "No password, no seed phrase — just your device.",
   signUp: "Sign up",
   signIn: "Sign in",
@@ -140,7 +140,7 @@ const en: Catalog = {
 };
 
 const zh: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "无需密码，无需助记词——只需你的设备。",
   signUp: "注册",
   signIn: "登录",
@@ -209,7 +209,7 @@ const zh: Catalog = {
 };
 
 const hi: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "कोई पासवर्ड नहीं, कोई सीड फ़्रेज़ नहीं — बस आपका डिवाइस।",
   signUp: "साइन अप करें",
   signIn: "साइन इन करें",
@@ -284,7 +284,7 @@ const hi: Catalog = {
 };
 
 const es: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Sin contraseña, sin frase semilla — solo tu dispositivo.",
   signUp: "Registrarse",
   signIn: "Iniciar sesión",
@@ -359,7 +359,7 @@ const es: Catalog = {
 };
 
 const fr: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Pas de mot de passe, pas de phrase secrète — juste votre appareil.",
   signUp: "S'inscrire",
   signIn: "Se connecter",
@@ -434,7 +434,7 @@ const fr: Catalog = {
 };
 
 const ar: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "لا كلمة مرور، ولا عبارة استرداد — جهازك فقط.",
   signUp: "إنشاء حساب",
   signIn: "تسجيل الدخول",
@@ -509,7 +509,7 @@ const ar: Catalog = {
 };
 
 const fa: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "بدون رمز عبور، بدون عبارت بازیابی — فقط دستگاه شما.",
   signUp: "ثبت‌نام",
   signIn: "ورود",
@@ -584,7 +584,7 @@ const fa: Catalog = {
 };
 
 const ru: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Без пароля, без seed-фразы — только ваше устройство.",
   signUp: "Зарегистрироваться",
   signIn: "Войти",
@@ -659,7 +659,7 @@ const ru: Catalog = {
 };
 
 const uk: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Без пароля, без seed-фрази — лише ваш пристрій.",
   signUp: "Зареєструватися",
   signIn: "Увійти",
@@ -734,7 +734,7 @@ const uk: Catalog = {
 };
 
 const pt: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Sem senha, sem frase de recuperação — apenas o seu dispositivo.",
   signUp: "Criar conta",
   signIn: "Entrar",
@@ -809,7 +809,7 @@ const pt: Catalog = {
 };
 
 const de: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Kein Passwort, keine Seed-Phrase — nur dein Gerät.",
   signUp: "Registrieren",
   signIn: "Anmelden",
@@ -884,7 +884,7 @@ const de: Catalog = {
 };
 
 const it: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Nessuna password, nessuna seed phrase — solo il tuo dispositivo.",
   signUp: "Registrati",
   signIn: "Accedi",
@@ -959,7 +959,7 @@ const it: Catalog = {
 };
 
 const pl: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Bez hasła, bez frazy seed — tylko Twoje urządzenie.",
   signUp: "Zarejestruj się",
   signIn: "Zaloguj się",
@@ -1034,7 +1034,7 @@ const pl: Catalog = {
 };
 
 const nl: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Geen wachtwoord, geen seed-zin — alleen je apparaat.",
   signUp: "Registreren",
   signIn: "Inloggen",
@@ -1109,7 +1109,7 @@ const nl: Catalog = {
 };
 
 const tr: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Parola yok, kurtarma ifadesi yok — yalnızca cihazınız.",
   signUp: "Kaydol",
   signIn: "Oturum aç",
@@ -1184,7 +1184,7 @@ const tr: Catalog = {
 };
 
 const id: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Tanpa kata sandi, tanpa frasa pemulihan — cukup perangkat Anda.",
   signUp: "Daftar",
   signIn: "Masuk",
@@ -1259,7 +1259,7 @@ const id: Catalog = {
 };
 
 const vi: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "Không mật khẩu, không cụm từ khôi phục — chỉ thiết bị của bạn.",
   signUp: "Đăng ký",
   signIn: "Đăng nhập",
@@ -1334,7 +1334,7 @@ const vi: Catalog = {
 };
 
 const ja: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "パスワードもシードフレーズも不要 — あなたのデバイスだけ。",
   signUp: "新規登録",
   signIn: "サインイン",
@@ -1409,7 +1409,7 @@ const ja: Catalog = {
 };
 
 const ko: Catalog = {
-  appTitle: "Trezu",
+  appTitle: "NEAR",
   appTagline: "비밀번호도, 시드 문구도 없이 — 당신의 기기만으로.",
   signUp: "가입",
   signIn: "로그인",
