@@ -45,6 +45,60 @@ the default label.
 Decision gate: `Object.keys(await storage.getKnownCredentials()).length === 0`
 → first account (no prompt) vs additional (prompt).
 
+## 3b. Cold sign-in = two device confirmations, ONE decision
+
+When no passkey is active, some cold sign-ins run **two** ceremonies: the
+first establishes the account, the second signs for it.
+
+- `resolveAuth` → **Sign up**: the `create()` makes the account, then the
+  AuthMessage is signed bound to that exact account id (`SignerId`).
+- `signInAndSignMessage` → Sign up or "Use another passkey": the `create()` or
+  a discovery `get()` (random challenge) reveals the account, then the NEP-413
+  message is signed for it.
+
+`resolveAuth` with an existing passkey stays **one** ceremony: its
+AuthMessage uses the `Code` binding (accepted by any account created from the
+canonical factories), so it can be signed before the account is known and the
+account is resolved from the assertion afterwards.
+
+What we *can* avoid is making the second one feel like a retry. Users read a
+second, identical "Sign in" screen as "the first try didn't work". So:
+
+- **No second tap.** Step 2 starts on its own right after step 1 (the user
+  already made their one decision) — `webauthnGetWithTapFallback`.
+- **Progress, not repetition.** Both ceremony screens carry a "Step 1 of 2" /
+  "Step 2 of 2" eyebrow, and step 2 says what step 1 achieved: "Account found"
+  / "Passkey created" with a ✓ chip showing the account, then "One more
+  confirmation with your device to finish signing in."
+- **Tap only as a fallback.** iOS Safari may refuse a ceremony without a fresh
+  user activation after the network-bound lookup / registration. A `get()`
+  that fails in under `BLOCKED_CEREMONY_MS` (1.5 s) never showed the user a
+  system prompt — nobody cancels Face ID that fast — so we treat it as blocked
+  and show the same step-2 screen with a "Finish signing in" button, retrying
+  from that tap. A slower failure is a real cancel and surfaces as an error.
+  (`NotAllowedError` is matched when the name is known; near-connect's sandbox
+  bridge currently forwards only the message, so the timing carries it.)
+
+## 3c. Returning devices skip discovery
+
+`passkey:known` (kept across sign-out) already maps this device's passkeys to
+their accounts, so discovery is only needed for a passkey this device has
+never seen (new device, synced passkey, cleared site data). When known
+passkeys exist, the entry dialog becomes **"Welcome back"**: the two most
+recently used accounts as one-tap rows (passkey label + short `0s1a2b…c3d4`
+id), with "Use another passkey" (discovery) and "Sign up" as links below.
+Picking a row goes straight to a **targeted** ceremony for that account:
+
+- `resolveAuth`: that ceremony signs the AuthMessage bound to that account
+  (`SignerId`) directly — **one** device confirmation in total;
+- `signIn`: it proves the user still holds the passkey (verified against the
+  cached key), without the OS account chooser.
+
+The label is the name the passkey was created with on this device
+(`DEFAULT_PASSKEY_LABEL` for the first account and for discovered passkeys);
+`lastUsedAt` orders the rows. A stale row (passkey deleted from the keychain)
+fails its ceremony like a cancel; "Use another passkey" stays one tap away.
+
 ## 4. Resident keys + user verification are non-negotiable
 
 Not cosmetic, but they shape the UX, so they belong here:
@@ -95,13 +149,14 @@ NOT** — it goes straight to the ceremony (`showProgress` biometric screen →
 `webauthnGet`), because the OS prompt (Face ID / Windows Hello / the account
 chooser) is itself the confirmation and the extra tap was pure friction.
 
-Note the button was never a functional *user-activation* source: the sandbox
-runs `navigator.credentials.get()` in the **host window off a postMessage**
-(`SandboxedWallet/executor.ts`), not off the in-iframe click, so the click's
-transient activation never reaches the real ceremony. WebAuthn `get()` works in
-that host-window context without it. The button is therefore only an explicit
-"you're about to sign" affordance — keep it where a deliberate confirmation adds
-value, drop it (as on Approve) where the OS prompt already confirms.
+The sandbox runs `navigator.credentials.get()` in the **host window off a
+postMessage** (`SandboxedWallet/executor.ts`), not off the in-iframe click.
+Per the HTML spec a click in the iframe does activate its ancestor windows too,
+so the button *can* supply activation where a browser insists on one (iOS
+Safari after a slow network step) — which is why §3b keeps it as a fallback.
+Where the browser doesn't insist, the button is only an explicit "you're about
+to sign" affordance — keep it where a deliberate confirmation adds value, drop
+it (as on Approve) where the OS prompt already confirms.
 
 ## 7. Device-neutral wording
 

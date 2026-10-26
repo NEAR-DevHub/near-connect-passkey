@@ -133,6 +133,10 @@ export interface KnownCredential {
   publicKey: string;
   curve: PasskeyCurve;
   accountId: string;
+  /** Passkey name given at sign-up on this device (absent for discovered ones). */
+  label?: string;
+  /** Last sign-in with this credential here — orders the "Welcome back" list. */
+  lastUsedAt?: number;
 }
 
 export type KnownCredentialMap = Record<string, KnownCredential>;

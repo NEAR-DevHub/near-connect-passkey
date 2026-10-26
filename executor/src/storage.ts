@@ -43,8 +43,31 @@ export async function addKnownCredential(
   credential: KnownCredential,
 ): Promise<void> {
   const known = await getKnownCredentials();
-  known[rawIdB64] = credential;
+  // Merge: re-verifying a credential must not drop its label / lastUsedAt.
+  known[rawIdB64] = { ...known[rawIdB64], ...credential };
   await setJson(STORAGE_KNOWN, known);
+}
+
+/** Stamp `lastUsedAt` so the "Welcome back" list offers the latest account first. */
+export async function touchKnownCredential(rawIdB64: string): Promise<void> {
+  const known = await getKnownCredentials();
+  const entry = known[rawIdB64];
+  if (!entry) return;
+  entry.lastUsedAt = Date.now();
+  await setJson(STORAGE_KNOWN, known);
+}
+
+/** Known credentials, most recently used first (then most recently added). */
+export async function listKnownCredentials(): Promise<
+  Array<KnownCredential & { rawIdB64: string }>
+> {
+  const entries = Object.entries(await getKnownCredentials()).map(([rawIdB64, c]) => ({
+    ...c,
+    rawIdB64,
+  }));
+  // Object key order is insertion order: reverse for newest-added first, then
+  // a stable sort by lastUsedAt keeps that order among never-used entries.
+  return entries.reverse().sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
 }
 
 export const getPendingRegistration = (): Promise<PendingRegistration | null> =>

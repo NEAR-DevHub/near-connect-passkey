@@ -57,7 +57,7 @@ import {
   rawIdToB64,
   verifyAssertion,
 } from "./webauthn";
-import { friendlyWebauthnError } from "./errors";
+import { ceremonyWasBlocked, webauthnCeremonyError } from "./errors";
 import { t } from "./i18n";
 import type { AuthMessageJson } from "./walletContract";
 import { authMessageHash } from "./walletContract";
@@ -198,7 +198,7 @@ async function webauthnCreate(name: string): Promise<WebauthnCreateResult> {
       attestation: "none",
     });
   } catch (e) {
-    throw new Error(friendlyWebauthnError(e, "create"));
+    throw webauthnCeremonyError(e, "create");
   }
 
   createUvDebug(result); // TEMPORARY: log create flags for create-vs-get comparison
@@ -231,7 +231,7 @@ async function rawWebauthnGet(
   try {
     result = await selector().webauthn.get(options);
   } catch (e) {
-    throw new Error(friendlyWebauthnError(e, "get"));
+    throw webauthnCeremonyError(e, "get");
   }
   // TEMPORARY: capture the assertion flags + browser (UV-on-Windows/Edge).
   const debug = uvDebug(result.authenticatorData, result.clientDataJSON, path);
@@ -300,6 +300,27 @@ async function webauthnGet(
   }
 
   throw new Error(`${t("errNotVerified")} [debug ${debug}]`);
+}
+
+/**
+ * `webauthnGet` for the SECOND ceremony of a two-step sign-in: start it right
+ * away (no extra tap — the user already acted), and only if the browser
+ * refuses it outright show `tapScreen` (a one-button confirm) and retry from
+ * that tap. See UX_DECISIONS.md §3b.
+ */
+async function webauthnGetWithTapFallback(
+  challenge: Uint8Array,
+  rawIdB64: string,
+  tapScreen: () => Promise<void>,
+): Promise<WebauthnGetResult> {
+  const startedAt = Date.now();
+  try {
+    return await webauthnGet(challenge, rawIdB64);
+  } catch (e) {
+    if (!ceremonyWasBlocked(e, Date.now() - startedAt)) throw e;
+  }
+  await tapScreen();
+  return webauthnGet(challenge, rawIdB64);
 }
 
 // ─── Credential resolution ───────────────────────────────────────────────────
@@ -394,14 +415,14 @@ async function retryPendingRegistration(): Promise<void> {
   });
 }
 
-async function createNewPasskey(): Promise<ActiveCredential> {
+async function createNewPasskey(ctx?: ui.StepContext): Promise<ActiveCredential> {
   // First account: no prompt at all — default the passkey label and go
   // straight to the device ceremony (Web2-familiar, zero friction). Only when
   // the user already has a passkey here (creating an ADDITIONAL account) do we
   // ask for a username/email label so the accounts stay distinguishable.
   const isFirstAccount = Object.keys(await storage.getKnownCredentials()).length === 0;
   const name = isFirstAccount ? DEFAULT_PASSKEY_LABEL : await ui.promptPasskeyLabel();
-  await ui.showProgress(t("createPasskeyTitle"), t("createPasskeySubtitle"), "biometric");
+  await ui.showProgress(t("createPasskeyTitle"), t("createPasskeySubtitle"), "biometric", ctx);
   const created = await webauthnCreate(name);
   await ui.showProgress(t("registeringTitle"), t("registeringSubtitle"));
 
@@ -433,6 +454,7 @@ async function createNewPasskey(): Promise<ActiveCredential> {
     publicKey: publicKeyStr,
     curve: publicKey.curve,
     accountId,
+    label: name,
   });
 
   // Persist the pending registration too, so an interrupted registration is
@@ -452,12 +474,59 @@ async function createNewPasskey(): Promise<ActiveCredential> {
     accountId,
     registeredAt: Date.now(),
   };
-  await storage.setActiveCredential(active);
+  await activate(active);
   return active;
 }
 
-async function useExistingPasskey(): Promise<ActiveCredential> {
-  await ui.showProgress(t("usePasskeyTitle"), t("usePasskeySubtitle"), "biometric");
+/** Make `active` the signed-in credential and bump it in the known list. */
+async function activate(active: ActiveCredential): Promise<void> {
+  await storage.setActiveCredential(active);
+  await storage.touchKnownCredential(active.rawId);
+}
+
+/** "Welcome back" rows for the entry dialog (UX_DECISIONS.md §3c). */
+async function knownAccountOptions(): Promise<ui.KnownAccountOption[]> {
+  return (await storage.listKnownCredentials()).map((c) => ({
+    rawIdB64: c.rawIdB64,
+    accountId: c.accountId,
+    label: c.label ?? DEFAULT_PASSKEY_LABEL,
+  }));
+}
+
+/** The active credential for a known account picked in the entry dialog. */
+async function knownCredential(rawIdB64: string): Promise<ActiveCredential> {
+  const known = (await storage.getKnownCredentials())[rawIdB64];
+  if (!known) throw new Error(t("errNotRegistered"));
+  return {
+    rawId: rawIdB64,
+    publicKey: known.publicKey,
+    curve: known.curve,
+    accountId: known.accountId,
+    registeredAt: Date.now(),
+  };
+}
+
+/**
+ * Sign in with a known account: ONE targeted ceremony (no OS account chooser)
+ * proves the user still holds the passkey, verified against the cached key.
+ */
+async function useKnownPasskey(
+  rawIdB64: string,
+  ctx?: ui.StepContext,
+): Promise<ActiveCredential> {
+  const candidate = await knownCredential(rawIdB64);
+  await ui.showProgress(t("confirmSignInTitle"), t("confirmSignInSubtitle"), "biometric", {
+    ...ctx,
+    account: candidate.accountId,
+  });
+  const assertion = await webauthnGet(new Uint8Array(randomBytes(32)), rawIdB64);
+  const active = toActiveCredential(await resolveCredential(assertion));
+  await activate(active);
+  return active;
+}
+
+async function useExistingPasskey(ctx?: ui.StepContext): Promise<ActiveCredential> {
+  await ui.showProgress(t("usePasskeyTitle"), t("usePasskeySubtitle"), "biometric", ctx);
   const assertion = await webauthnGet(new Uint8Array(randomBytes(32)));
   await ui.showProgress(t("lookingUpTitle"), t("lookingUpSubtitle"));
   let resolved: ResolvedCredential;
@@ -471,7 +540,7 @@ async function useExistingPasskey(): Promise<ActiveCredential> {
     throw e;
   }
   const active = toActiveCredential(resolved);
-  await storage.setActiveCredential(active);
+  await activate(active);
   return active;
 }
 
@@ -527,6 +596,30 @@ async function ensureAccountOnChain(active: ActiveCredential): Promise<void> {
   );
 }
 
+/**
+ * Sign an AuthMessage bound to `active`'s exact account id (SignerId binding)
+ * and make sure the account exists on-chain (view calls cannot run against a
+ * not-yet-initialized deterministic account).
+ */
+async function signSignerIdAuthorization(
+  active: ActiveCredential,
+  params: ResolveAuthParams,
+  progressSubtitle: "signingInFinalizeSubtitle" | "signingInSetupSubtitle",
+  tapScreen?: () => Promise<void>,
+): Promise<ResolveAuthResponse> {
+  const message = buildAuthMessageSignerId({ ...params, signerId: active.accountId });
+  const challenge = authMessageHash(message);
+  const assertion = tapScreen
+    ? await webauthnGetWithTapFallback(challenge, active.rawId, tapScreen)
+    : await webauthnGet(challenge, active.rawId);
+  await ui.showProgress(t("signingInTitle"), t(progressSubtitle));
+  await ensureAccountOnChain(active);
+  return {
+    accountId: active.accountId,
+    authorization: buildAuthorizationBlob(message, buildProof(active.curve, assertion)),
+  };
+}
+
 // ─── NEP-413 ────────────────────────────────────────────────────────────────
 
 const NEP413_TAG = 2 ** 31 + 413;
@@ -544,6 +637,34 @@ function nep413PayloadHash(message: string, recipient: string, nonce: Uint8Array
 
 // ─── Wallet ─────────────────────────────────────────────────────────────────
 
+/** Entry dialog → chosen sign-in path. Leaves the UI open for the caller. */
+async function signInInteractive(ctx?: ui.StepContext): Promise<ActiveCredential> {
+  const choice = await ui.promptSignInChoice(await knownAccountOptions());
+  if (choice === "create") return createNewPasskey(ctx);
+  if (choice === "existing") return useExistingPasskey(ctx);
+  return useKnownPasskey(choice.rawIdB64, ctx);
+}
+
+/** NEP-413 signature with `active`; `tapScreen` = two-step auto-continue (§3b). */
+async function signNep413(
+  active: ActiveCredential,
+  params: SignMessageParams,
+  tapScreen?: () => Promise<void>,
+): Promise<SignedMessage> {
+  const nonce =
+    params.nonce instanceof Uint8Array ? params.nonce : new Uint8Array(params.nonce);
+  const challenge = nep413PayloadHash(params.message, params.recipient, nonce);
+  const assertion = tapScreen
+    ? await webauthnGetWithTapFallback(challenge, active.rawId, tapScreen)
+    : await webauthnGet(challenge, active.rawId);
+  const proof = buildProof(active.curve, assertion);
+  return {
+    accountId: active.accountId,
+    publicKey: active.publicKey,
+    signature: base64.encode(new TextEncoder().encode(proof)),
+  };
+}
+
 const wallet = {
   // Overwritten by `selector.ready()` with the real manifest.
   manifest: {} as Record<string, unknown>,
@@ -559,10 +680,8 @@ const wallet = {
     const existing = await storage.getActiveCredential();
     if (existing) return [toAccount(existing)];
 
-    const choice = await ui.promptSignInChoice();
     try {
-      const active = choice === "create" ? await createNewPasskey() : await useExistingPasskey();
-      return [toAccount(active)];
+      return [toAccount(await signInInteractive())];
     } finally {
       await ui.closeUi();
     }
@@ -571,16 +690,37 @@ const wallet = {
   async signInAndSignMessage(
     params: SignInAndSignMessageParams,
   ): Promise<AccountWithSignedMessage[]> {
-    const accounts = await this.signIn(params);
-    const account = accounts[0];
-    if (!account) throw new Error("sign-in produced no account");
-    const signedMessage = await this.signMessage({
+    const messageParams: SignMessageParams = {
       message: params.messageParams.message,
       recipient: params.messageParams.recipient,
       nonce: params.messageParams.nonce,
       network: params.network,
-    });
-    return [{ ...account, signedMessage }];
+    };
+    if (await storage.getActiveCredential()) {
+      const accounts = await this.signIn(params);
+      const account = accounts[0];
+      if (!account) throw new Error("sign-in produced no account");
+      return [{ ...account, signedMessage: await this.signMessage(messageParams) }];
+    }
+
+    // Cold sign-in: same two-step treatment as resolveAuth (§3b) — the
+    // message signature follows the sign-in without another tap.
+    assertMainnet(params.network);
+    if (params.addFunctionCallKey) {
+      throw new Error("Function-call access keys are not supported by passkey wallet accounts");
+    }
+    await retryPendingRegistration();
+    try {
+      const active = await signInInteractive({ step: [1, 2] });
+      const step2: ui.StepContext = { step: [2, 2], account: active.accountId };
+      await ui.showProgress(t("signMsgTitle"), t("signMsgSubtitle"), "biometric", step2);
+      const signedMessage = await signNep413(active, messageParams, () =>
+        ui.promptConfirm(t("signMsgTitle"), t("signMsgSubtitle"), t("signBtn"), step2),
+      );
+      return [{ ...toAccount(active), signedMessage }];
+    } finally {
+      await ui.closeUi();
+    }
   },
 
   async signOut(): Promise<void> {
@@ -597,19 +737,10 @@ const wallet = {
     assertMainnet(params.network);
     const active = await requireActive();
 
-    const nonce =
-      params.nonce instanceof Uint8Array ? params.nonce : new Uint8Array(params.nonce);
-    const challenge = nep413PayloadHash(params.message, params.recipient, nonce);
     // Fresh user activation for the ceremony (dApp-initiated, no prior tap).
     await ui.promptConfirm(t("signMsgTitle"), t("signMsgSubtitle"), t("signBtn"));
     try {
-      const assertion = await webauthnGet(challenge, active.rawId);
-      const proof = buildProof(active.curve, assertion);
-      return {
-        accountId: active.accountId,
-        publicKey: active.publicKey,
-        signature: base64.encode(new TextEncoder().encode(proof)),
-      };
+      return await signNep413(active, params);
     } finally {
       await ui.closeUi();
     }
@@ -703,23 +834,45 @@ const wallet = {
     // create a new account or pick an existing passkey, with visible
     // progress for every step after that.
     await retryPendingRegistration();
-    const choice = await ui.promptSignInChoice();
+    const choice = await ui.promptSignInChoice(await knownAccountOptions());
 
     try {
+      // Known account (picked from our own "Welcome back" list): its id is
+      // already known, so bind to it exactly (SignerId) and sign straight
+      // away — ONE device confirmation (§3c).
+      if (typeof choice === "object") {
+        const active = await knownCredential(choice.rawIdB64);
+        await activate(active);
+        await ui.showProgress(t("confirmSignInTitle"), t("confirmSignInSubtitle"), "biometric", {
+          account: active.accountId,
+        });
+        try {
+          return await signSignerIdAuthorization(active, params, "signingInFinalizeSubtitle");
+        } catch (e) {
+          await storage.clearActiveCredential();
+          throw e;
+        }
+      }
+
       if (choice === "create") {
-        const active = await createNewPasskey();
-        // Account id is now known — bind to it exactly (SignerId).
-        const message = buildAuthMessageSignerId({ ...params, signerId: active.accountId });
-        const challenge = authMessageHash(message);
-        // Fresh activation after the (network-bound) registration step.
-        await ui.promptConfirm(t("confirmSignInTitle"), t("confirmSignInAgainSubtitle"), t("confirmSignInBtn"));
-        const assertion = await webauthnGet(challenge, active.rawId);
-        await ui.showProgress(t("signingInTitle"), t("signingInSetupSubtitle"));
-        await ensureAccountOnChain(active);
-        return {
-          accountId: active.accountId,
-          authorization: buildAuthorizationBlob(message, buildProof(active.curve, assertion)),
-        };
+        const step1: ui.StepContext = { step: [1, 2] };
+        const active = await createNewPasskey(step1);
+
+        // Step 2 starts on its own — the user already acted, and the screen
+        // says what step 1 achieved so this never reads as "it didn't work"
+        // (§3b). Only if the browser blocks it (no fresh activation after the
+        // network-bound step) do we fall back to a one-tap confirm.
+        const step2: ui.StepContext = { step: [2, 2], account: active.accountId };
+        const step2Title = t("passkeyCreatedTitle");
+        await ui.showProgress(step2Title, t("finishSignInSubtitle"), "biometric", step2);
+        try {
+          return await signSignerIdAuthorization(active, params, "signingInSetupSubtitle", () =>
+            ui.promptConfirm(step2Title, t("finishSignInSubtitle"), t("finishSignInBtn"), step2),
+          );
+        } catch (e) {
+          await storage.clearActiveCredential();
+          throw e;
+        }
       }
 
       // Existing passkey, cold discovery: the account id is not known until the

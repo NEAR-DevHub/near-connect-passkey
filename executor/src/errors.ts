@@ -14,6 +14,46 @@ import { t } from "./i18n";
 
 export type WebauthnCeremony = "create" | "get";
 
+/**
+ * A failed WebAuthn ceremony: the user-facing message plus the raw
+ * `DOMException.name` — "" when unknown (near-connect's sandbox bridge
+ * currently forwards only `error.message`, not the name).
+ */
+export class WebauthnCeremonyError extends Error {
+  readonly domName: string;
+
+  constructor(message: string, domName: string) {
+    super(message);
+    this.name = "WebauthnCeremonyError";
+    this.domName = domName;
+  }
+}
+
+/** Wrap a raw ceremony failure in a {@link WebauthnCeremonyError}. */
+export function webauthnCeremonyError(
+  error: unknown,
+  ceremony: WebauthnCeremony,
+): WebauthnCeremonyError {
+  return new WebauthnCeremonyError(friendlyWebauthnError(error, ceremony), errorName(error));
+}
+
+/**
+ * A failed `get()` this fast never showed the user a system prompt — nobody
+ * cancels Face ID / Windows Hello in under 1.5 s. It means the browser refused
+ * the ceremony up front (typically iOS Safari wanting a fresh user activation
+ * after a network-bound step), not that the user declined.
+ */
+export const BLOCKED_CEREMONY_MS = 1500;
+
+export function ceremonyWasBlocked(e: unknown, elapsedMs: number): boolean {
+  return (
+    elapsedMs < BLOCKED_CEREMONY_MS &&
+    e instanceof WebauthnCeremonyError &&
+    // "" = name unknown (the near-connect bridge forwards only the message).
+    (e.domName === "NotAllowedError" || e.domName === "")
+  );
+}
+
 /** Best-effort extraction of a DOMException-style error name. */
 function errorName(error: unknown): string {
   if (error && typeof error === "object" && "name" in error) {
