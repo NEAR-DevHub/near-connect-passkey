@@ -15,7 +15,15 @@ import {
   signatureToString,
   verifyAssertion,
 } from "../webauthn";
-import { friendlyWebauthnError } from "../errors";
+import { requestMessageHash } from "../walletContract";
+import {
+  BLOCKED_CEREMONY_MS,
+  WebauthnCeremonyError,
+  ceremonyWasBlocked,
+  friendlyWebauthnError,
+  webauthnCeremonyError,
+} from "../errors";
+import { shortAccountId } from "../ui";
 
 // ─── Minimal CBOR encoder (tests only) ───────────────────────────────────────
 
@@ -334,5 +342,41 @@ describe("friendly WebAuthn errors", () => {
     expect(friendlyWebauthnError(named("WeirdUnknownError"), "get")).toMatch(
       /something went wrong/i,
     );
+  });
+});
+
+describe("blocked-ceremony detection (two-step auto-continue fallback)", () => {
+  const err = (name: string) => new WebauthnCeremonyError("msg", name);
+
+  it("treats a fast NotAllowedError as blocked (no system prompt shown)", () => {
+    expect(ceremonyWasBlocked(err("NotAllowedError"), 120)).toBe(true);
+  });
+
+  it("treats a fast failure with an unknown name as blocked (bridge drops the name)", () => {
+    expect(ceremonyWasBlocked(err(""), 120)).toBe(true);
+  });
+
+  it("treats a slow NotAllowedError as a real user cancel", () => {
+    expect(ceremonyWasBlocked(err("NotAllowedError"), BLOCKED_CEREMONY_MS + 1)).toBe(false);
+  });
+
+  it("never retries other ceremony errors or non-ceremony errors", () => {
+    expect(ceremonyWasBlocked(err("InvalidStateError"), 50)).toBe(false);
+    expect(ceremonyWasBlocked(new Error("wrong passkey"), 50)).toBe(false);
+  });
+
+  it("keeps the friendly message and raw name on wrapped errors", () => {
+    const e = webauthnCeremonyError({ name: "NotAllowedError" }, "get");
+    expect(e).toBeInstanceOf(WebauthnCeremonyError);
+    expect(e.domName).toBe("NotAllowedError");
+    expect(e.message).toBe(friendlyWebauthnError({ name: "NotAllowedError" }, "get"));
+    expect(webauthnCeremonyError("plain string from the bridge", "get").domName).toBe("");
+  });
+});
+
+describe("shortAccountId", () => {
+  it("shortens deterministic 0s accounts and leaves short ids alone", () => {
+    expect(shortAccountId("0s1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")).toBe("0s1a2b…9a0b");
+    expect(shortAccountId("alice.near")).toBe("alice.near");
   });
 });

@@ -84,6 +84,34 @@ const STYLES = `
 .pk-btn.pk-secondary{
   color:var(--pk-text);background:var(--pk-secondary);box-shadow:none;
 }
+/* Known-account rows: label over a short monospace account id. */
+.pk-btn.pk-account{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:1px;height:auto;min-height:56px;padding:8px 16px;
+}
+.pk-acct-label{font-size:16px;font-weight:600;line-height:1.2;}
+.pk-acct-id,.pk-chip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+.pk-acct-id{font-size:12px;font-weight:500;opacity:0.72;}
+.pk-links{display:flex;justify-content:center;flex-wrap:wrap;gap:4px 20px;margin-top:10px;}
+.pk-link{
+  -webkit-appearance:none;appearance:none;cursor:pointer;border:0;background:none;
+  padding:8px 4px;font:600 15px/1.2 inherit;font-family:inherit;color:var(--pk-accent-hi);
+  touch-action:manipulation;
+}
+.pk-link:active{opacity:0.6;}
+
+/* Two-step sign-in: "Step 2 of 2" eyebrow + "✓ 0s1a2b…c3d4" chip carry the
+   sense of progress, so the second ceremony never reads as a retry. */
+.pk-step{
+  margin:0 0 -6px;font-size:13px;font-weight:600;letter-spacing:0.01em;
+  color:var(--pk-subtle);
+}
+.pk-chip{
+  display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:4px 10px;
+  border-radius:999px;background:var(--pk-secondary);
+  font-size:13px;font-weight:500;color:var(--pk-text);
+}
+.pk-chip .pk-check{color:#30D158;font-family:-apple-system,system-ui,sans-serif;font-weight:700;}
 .pk-input{
   box-sizing:border-box;display:block;width:100%;margin-top:16px;
   padding:14px 16px;border-radius:14px;border:1px solid var(--pk-hairline);
@@ -226,6 +254,30 @@ export async function closeUi(): Promise<void> {
 
 export type ProgressVisual = "spinner" | "biometric";
 
+/** Optional progress context for ceremony screens of the two-step sign-in. */
+export interface StepContext {
+  /** `[current, total]` → "Step 2 of 2" eyebrow above the title. */
+  step?: readonly [number, number];
+  /** Account already established by an earlier step → "✓ 0s1a2b…c3d4" chip. */
+  account?: string;
+}
+
+/** `0s1a2b…c3d4`: deterministic `0s` + 40-hex ids are unreadable in full. */
+export function shortAccountId(accountId: string): string {
+  return accountId.length > 14 ? `${accountId.slice(0, 6)}…${accountId.slice(-4)}` : accountId;
+}
+
+function stepHtml(ctx: StepContext | undefined): string {
+  if (!ctx?.step) return "";
+  const [n, total] = ctx.step;
+  return `<p class="pk-step">${escapeHtml(t("stepOf", { n, total }))}</p>`;
+}
+
+function accountChipHtml(ctx: StepContext | undefined): string {
+  if (!ctx?.account) return "";
+  return `<div class="pk-chip"><span class="pk-check" aria-hidden="true">✓</span>${escapeHtml(shortAccountId(ctx.account))}</div>`;
+}
+
 /**
  * Long-running-step screen. `biometric` (the default for ceremony hand-offs)
  * shows the breathing Face ID glyph so the wallet's screen feels continuous
@@ -236,32 +288,82 @@ export async function showProgress(
   title: string,
   subtitle: string,
   visual: ProgressVisual = "spinner",
+  ctx?: StepContext,
 ): Promise<void> {
   const art = visual === "biometric" ? BIOMETRIC_SVG : SPINNER_SVG;
   await openDialog(`
     ${art}
+    ${stepHtml(ctx)}
     <h1>${escapeHtml(title)}</h1>
+    ${accountChipHtml(ctx)}
     <p>${escapeHtml(subtitle)}</p>
   `);
 }
 
-export type SignInChoice = "existing" | "create";
+/** A passkey this device has used before, offered as a one-tap sign-in. */
+export interface KnownAccountOption {
+  rawIdB64: string;
+  accountId: string;
+  label: string;
+}
+
+/**
+ * `create` = Sign up, `existing` = discover a passkey via the OS chooser,
+ * `{ rawIdB64 }` = a known account picked from our own list (no discovery).
+ */
+export type SignInChoice = "create" | "existing" | { rawIdB64: string };
+
+/** At most this many known accounts are listed; the rest go through discovery. */
+const MAX_KNOWN_ACCOUNTS = 2;
 
 /**
  * Entry dialog, in Web2-familiar terms: "Sign up" creates a new account,
  * "Sign in" uses an existing passkey. (`create` / `existing` internally.)
+ *
+ * When this device already knows passkeys (`known`, most recent first), they
+ * are offered as "Welcome back" rows instead: picking one skips the discovery
+ * ceremony entirely, so a returning user confirms with their device ONCE.
+ * "Use another passkey" (discovery) and "Sign up" stay one tap away.
  */
-export async function promptSignInChoice(): Promise<SignInChoice> {
-  const el = await openDialog(`
+export async function promptSignInChoice(
+  known: readonly KnownAccountOption[] = [],
+): Promise<SignInChoice> {
+  const accounts = known.slice(0, MAX_KNOWN_ACCOUNTS);
+  const el =
+    accounts.length === 0
+      ? await openDialog(`
     ${BIOMETRIC_SVG}
     <h1>${escapeHtml(t("appTitle"))}</h1>
     <p>${escapeHtml(t("appTagline"))}</p>
     <button id="pk-create" class="pk-btn">${escapeHtml(t("signUp"))}</button>
     <button id="pk-existing" class="pk-btn pk-secondary">${escapeHtml(t("signIn"))}</button>
+  `)
+      : await openDialog(`
+    ${BIOMETRIC_SVG}
+    <h1>${escapeHtml(t("welcomeBackTitle"))}</h1>
+    <p>${escapeHtml(t("chooseAccountSubtitle"))}</p>
+    ${accounts
+      .map(
+        (a, i) => `<button class="pk-btn pk-account${i === 0 ? "" : " pk-secondary"}" data-raw-id="${escapeHtml(a.rawIdB64)}">
+      <span class="pk-acct-label">${escapeHtml(a.label)}</span>
+      <span class="pk-acct-id">${escapeHtml(shortAccountId(a.accountId))}</span>
+    </button>`,
+      )
+      .join("")}
+    <div class="pk-links">
+      <button id="pk-existing" class="pk-link">${escapeHtml(t("useAnotherPasskey"))}</button>
+      <button id="pk-create" class="pk-link">${escapeHtml(t("signUp"))}</button>
+    </div>
   `);
   return new Promise<SignInChoice>((resolve, reject) => {
     el.querySelector("#pk-existing")?.addEventListener("click", () => resolve("existing"));
     el.querySelector("#pk-create")?.addEventListener("click", () => resolve("create"));
+    el.querySelectorAll<HTMLElement>("[data-raw-id]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const rawIdB64 = button.dataset["rawId"];
+        if (rawIdB64) resolve({ rawIdB64 });
+      });
+    });
     // no cancel affordance beyond host-side iframe close; keep reject unused
     void reject;
   });
@@ -282,10 +384,13 @@ export async function promptConfirm(
   title: string,
   subtitle: string,
   buttonLabel: string,
+  ctx?: StepContext,
 ): Promise<void> {
   const el = await openDialog(`
     ${BIOMETRIC_SVG}
+    ${stepHtml(ctx)}
     <h1>${escapeHtml(title)}</h1>
+    ${accountChipHtml(ctx)}
     <p>${escapeHtml(subtitle)}</p>
     <button id="pk-confirm" class="pk-btn">${escapeHtml(buttonLabel)}</button>
   `);
