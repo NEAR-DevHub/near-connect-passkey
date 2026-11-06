@@ -9,84 +9,102 @@ import {
   delegateActionSignHash,
   sendRawTransaction,
   serializeDelegateAction,
-  serializeDeterministicStateInitAction,
   serializeFunctionCallAction,
   serializeSignedDelegateAction,
   serializeSignedTransaction,
   serializeTransaction,
   transactionHash,
 } from "./protocol";
-import type { RequestMessageJson } from "./walletContract";
+import type { RequestMessageJson, StateInitJson } from "./walletContract";
 import type { FinalExecutionOutcome } from "./types";
 
 const EXECUTE_GAS = 330_000_000_000_000n; // 330 TGas (300 TGas used to be the max possible value, but since nearcore 2.12 it was bumped to 1000 TGas, and wallet-contract usually consumes ~16 Tgas)
 const EXECUTE_DEPOSIT = 1n; // 1 yoctoNEAR (w_execute_signed is #[payable])
+const CREATE_ACCOUNT_GAS = 30_000_000_000_000n; // 30 TGas
 
 function sponsorKeyPair() {
   if (!SPONSOR_ACCOUNT_ID || !SPONSOR_PRIVATE_KEY) {
     throw new Error(
-      "Sponsor relayer is not configured (SPONSOR_ACCOUNT_ID / SPONSOR_PRIVATE_KEY are " +
-        "empty in constants.ts). Fill in a dedicated LOW-VALUE relayer account before " +
-        "shipping this executor.",
+      "Sponsor is not configured (SPONSOR_ACCOUNT_ID / SPONSOR_PRIVATE_KEY are empty in " +
+        "constants.ts).",
     );
   }
   return keyPair(SPONSOR_PRIVATE_KEY);
 }
 
-async function signAndSendSponsored(
+/**
+ * Call a method of the sponsor contract on helper.trezu.near with its public
+ * function-call key. Every user shares that key, so the nonce is re-read and
+ * the call retried when another user took it first.
+ */
+async function callSponsor(
   client: Client,
   rpcUrl: string,
-  receiverId: string,
-  rawActions: Uint8Array[],
+  methodName: string,
+  args: unknown,
+  gas: bigint,
 ): Promise<FinalExecutionOutcome> {
   const sponsor = sponsorKeyPair();
-  const [blockHashB58, accessKey] = await Promise.all([
-    client.getRecentBlockHash(),
-    client.getAccountAccessKey({
-      accountId: SPONSOR_ACCOUNT_ID,
-      publicKey: sponsor.publicKey,
-    }),
-  ]);
+  const action = serializeFunctionCallAction(methodName, args, gas, 0n);
+  for (let attempt = 0; ; attempt++) {
+    const [blockHashB58, accessKey] = await Promise.all([
+      client.getRecentBlockHash(),
+      client.getAccountAccessKey({
+        accountId: SPONSOR_ACCOUNT_ID,
+        publicKey: sponsor.publicKey,
+      }),
+    ]);
 
-  const txBytes = serializeTransaction({
-    signerId: SPONSOR_ACCOUNT_ID,
-    publicKey: sponsor.publicKeyU8,
-    nonce: BigInt(accessKey.accountAccessKey.nonce) + 1n,
-    receiverId,
-    blockHash: base58.decode(blockHashB58),
-    actions: rawActions,
-  });
+    const txBytes = serializeTransaction({
+      signerId: SPONSOR_ACCOUNT_ID,
+      publicKey: sponsor.publicKeyU8,
+      nonce:
+        BigInt(accessKey.accountAccessKey.nonce) + 1n + BigInt(Math.floor(Math.random() * 1000)),
+      receiverId: SPONSOR_ACCOUNT_ID,
+      blockHash: base58.decode(blockHashB58),
+      actions: [action],
+    });
 
-  const { signatureU8 } = await sponsor.signData({ dataU8: transactionHash(txBytes) });
-  const outcome = await sendRawTransaction(
-    rpcUrl,
-    serializeSignedTransaction(txBytes, signatureU8),
-  );
-  assertOutcomeSuccess(outcome);
-  return outcome;
+    const { signatureU8 } = await sponsor.signData({ dataU8: transactionHash(txBytes) });
+    let outcome: FinalExecutionOutcome;
+    try {
+      outcome = (await sendRawTransaction(
+        rpcUrl,
+        serializeSignedTransaction(txBytes, signatureU8),
+      )) as FinalExecutionOutcome;
+    } catch (e) {
+      if (attempt < 3 && /InvalidNonce|nonce/i.test(e instanceof Error ? e.message : String(e))) {
+        continue;
+      }
+      throw e;
+    }
+    assertOutcomeSuccess(outcome);
+    return outcome;
+  }
 }
 
 /**
- * Relay `w_execute_signed(msg, proof)` to the user's wallet account,
- * optionally initializing the deterministic account (NEP-616 StateInit)
- * within the same transaction.
+ * Relay `w_execute_signed(msg, proof)` to the user's wallet account through the
+ * sponsor's `relay_execute_signed`. The wallet's StateInit always goes along:
+ * it creates the account if needed and is a no-op otherwise, and the sponsor
+ * derives the wallet account id from it. The `{msg, proof}` JSON is forwarded
+ * byte for byte.
  */
 export async function relayExecuteSigned(
   client: Client,
   rpcUrl: string,
-  walletAccountId: string,
   msg: RequestMessageJson,
   proof: string,
-  stateInitBorsh: Uint8Array | null,
+  stateInit: StateInitJson,
 ): Promise<FinalExecutionOutcome> {
-  const rawActions: Uint8Array[] = [];
-  if (stateInitBorsh) {
-    rawActions.push(serializeDeterministicStateInitAction(stateInitBorsh, 0n));
-  }
-  rawActions.push(
-    serializeFunctionCallAction("w_execute_signed", { msg, proof }, EXECUTE_GAS, EXECUTE_DEPOSIT),
+  const args = new TextEncoder().encode(JSON.stringify({ msg, proof }));
+  return callSponsor(
+    client,
+    rpcUrl,
+    "relay_execute_signed",
+    { state_init: { deterministic: stateInit }, args: base64.encode(args) },
+    EXECUTE_GAS,
   );
-  return signAndSendSponsored(client, rpcUrl, walletAccountId, rawActions);
 }
 
 // The delegate action built below is never submitted as a meta-transaction,
@@ -143,14 +161,17 @@ export async function buildSignedDelegateAction(
   return base64.encode(serializeSignedDelegateAction(delegateAction, signature));
 }
 
-/** Relay a StateInit-only transaction (account creation, no wallet call). */
+/** Create the user's deterministic wallet account (sponsor's `create_deterministic_account`). */
 export async function relayStateInit(
   client: Client,
   rpcUrl: string,
-  walletAccountId: string,
-  stateInitBorsh: Uint8Array,
+  stateInit: StateInitJson,
 ): Promise<FinalExecutionOutcome> {
-  return signAndSendSponsored(client, rpcUrl, walletAccountId, [
-    serializeDeterministicStateInitAction(stateInitBorsh, 0n),
-  ]);
+  return callSponsor(
+    client,
+    rpcUrl,
+    "create_deterministic_account",
+    { state_init: stateInit },
+    CREATE_ACCOUNT_GAS,
+  );
 }
