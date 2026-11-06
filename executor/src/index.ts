@@ -13,7 +13,7 @@ import {
   deriveAccountId,
   publicKeyFromString,
   publicKeyToString,
-  serializeDefaultStateInit,
+  defaultStateInitJson,
 } from "./stateInit";
 import * as storage from "./storage";
 import type {
@@ -571,23 +571,17 @@ async function executeRequest(
 ): Promise<FinalExecutionOutcome> {
   const client = getClient();
   const { msg, proof } = await signRequestMessage(active, request);
-  const exists = await accountExists(client, active.accountId);
-  const stateInit = exists
-    ? null
-    : serializeDefaultStateInit(publicKeyFromString(active.publicKey));
-  return relayExecuteSigned(client, rpcUrl(), active.accountId, msg, proof, stateInit);
+  // The StateInit always rides along: it creates the account if needed and is
+  // a no-op otherwise, so no existence check is needed here.
+  const stateInit = defaultStateInitJson(publicKeyFromString(active.publicKey));
+  return relayExecuteSigned(client, rpcUrl(), msg, proof, stateInit);
 }
 
 /** Ensure the deterministic account exists on-chain (StateInit-only relay). */
 async function ensureAccountOnChain(active: ActiveCredential): Promise<void> {
   const client = getClient();
   if (await accountExists(client, active.accountId)) return;
-  await relayStateInit(
-    client,
-    rpcUrl(),
-    active.accountId,
-    serializeDefaultStateInit(publicKeyFromString(active.publicKey)),
-  );
+  await relayStateInit(client, rpcUrl(), defaultStateInitJson(publicKeyFromString(active.publicKey)));
 }
 
 /**
