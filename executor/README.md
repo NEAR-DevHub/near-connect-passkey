@@ -81,7 +81,7 @@ Tests pin the wire formats against authoritative vectors:
 |---|---|
 | `WALLET_CODE_IDS` | Global-contract ids of the wallet code, per curve. Changing one changes every derived account id. Run `npm run verify-contracts` after editing — it asserts the on-chain NEP-330 metadata declares `wallet-webauthn-<curve>` for each id. |
 | `REGISTRY_FC_PRIVATE_KEY` | Private key of the function-call access key on `passkeys-registry.near`, restricted to `register`. Ships inside the public executor by design (the registry is an open phonebook; wrong mappings cannot forge anything). Registration flows throw a clear error while empty. |
-| `SPONSOR_ACCOUNT_ID` / `SPONSOR_PRIVATE_KEY` | Relayer that submits users' wallet-contract transactions (deterministic accounts hold no keys). **Use a dedicated LOW-VALUE account** — its full-access key ships in the public bundle and anyone can drain it for gas. Fund with small amounts and top up automatically. |
+| `SPONSOR_ACCOUNT_ID` / `SPONSOR_PRIVATE_KEY` | Account sponsor: `helper.trezu.near` runs [near-account-sponsor](https://github.com/NEAR-DevHub/near-account-sponsor), which creates users' deterministic wallet accounts (`create_deterministic_account`) and relays `w_execute_signed` to them (`relay_execute_signed`). The key is a **public function-call key** limited to those two methods; the contract only touches wallets running allowlisted code and rate-limits both. |
 
 ## `resolveAuth` (NEP-641) API
 
@@ -148,7 +148,7 @@ domain, which the sandboxed executor deliberately does not do.
 | `errors.ts` | WebAuthn `DOMException` → plain-language, non-technical user messages (via `i18n`) |
 | `i18n.ts` | localized user-facing strings (19 languages), `navigator`-detected with smart fallbacks + RTL |
 | `registry.ts` | `passkeys-registry.near` get/register (retry + backoff) |
-| `relayer.ts` | sponsor-signed relaying of `w_execute_signed` / StateInit |
+| `relayer.ts` | calls to the account sponsor (`relay_execute_signed`, `create_deterministic_account`) and offline delegate actions |
 | `storage.ts` | typed sandboxed-storage accessors, nonce counter |
 | `ui.ts` | sign-in / naming / retry / error dialogs |
 | `index.ts` | wallet object assembly, `window.selector.ready(wallet)` |

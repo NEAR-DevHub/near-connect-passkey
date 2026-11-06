@@ -33,15 +33,19 @@ export const REGISTRY_ID = "passkeys-registry.near";
 export const REGISTRY_FC_PRIVATE_KEY = "ed25519:3eDM1nB2hVs8mYminjBuBSxr7d4Gmd2JaAJhtmviVDQRm1zPGC7TxXoEwQsR9JBxDH3ax1U5RnfiAP3n4CZCfHXf";
 
 /**
- * Sponsor (relayer) account used to submit wallet-contract transactions on
- * behalf of users (users' deterministic accounts hold no keys).
+ * Account sponsor: helper.trezu.near runs near-account-sponsor
+ * (https://github.com/NEAR-DevHub/near-account-sponsor), which creates users'
+ * deterministic wallet accounts and relays `w_execute_signed` to them (the
+ * accounts hold no keys).
  *
- * PLACEHOLDER: must be filled before shipping. Use a DEDICATED, LOW-VALUE
- * account: its full-access key ships inside this public executor and anyone
- * can drain it for gas. Fund it with small amounts, top up automatically.
+ * This is a FUNCTION-CALL key, public on purpose: it may only call
+ * `create_deterministic_account` and `relay_execute_signed` on
+ * helper.trezu.near, the contract only creates or relays to wallets running
+ * allowlisted code, attaches no deposit (1 yoctoNEAR for relays) and
+ * rate-limits both. Gas is capped by the key's allowance.
  */
 export const SPONSOR_ACCOUNT_ID = "helper.trezu.near";
-export const SPONSOR_PRIVATE_KEY = "ed2" + "55" + "19:3P5ganuF3X4fZtLXQi9c" + "4bAtLnWnDiWPAYBZPedNEiGGwJTeCfu" + "Lds1B6JWohGYndqgeNEdYBmpWTfqNbqzwTU5R";
+export const SPONSOR_PRIVATE_KEY = "ed25519:45zWdVYQQbZpZESFgBuW4vA6pJGuXGjZBGMJwZxGzauGhzk5XuWi3WYND5NXmNF9AfhZhEfhpR1Y5EBqFKgeQb19";
 
 /** Default wallet-contract nonce timeout (secs); also the message timeout we sign with. */
 export const DEFAULT_TIMEOUT_SECS = 3600;
